@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+uploads/images/
 
 # C extensions
 *.so
@@ -29,14 +30,6 @@ share/python-wheels/
 venv/
 ENV/
 
-# Databases
-app.db
-*.db
-*.sqlite
-
 # Application specific files
-uploads/
-outputs/
 *TEMP_MPY_wvf_snd.mp4
 yt-video-builder.zip
-*.mp4
