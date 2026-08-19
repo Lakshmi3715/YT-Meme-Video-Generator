@@ -161,7 +161,7 @@ def run_ffmpeg_command(cmd, total_duration, fallback_cmd=None):
 
 
 def create_full_video(images_folder, music_path, bg_video_path, output_path,
-                      image_display_sec=7, fps=24, target_size=(1280, 720)):
+                      image_display_sec=7, fps=24, target_size=(1920, 1080)):
     """
     Full video: expects images_folder to have exactly 15 images.
     Each image displayed for image_display_sec seconds sequentially.
@@ -263,7 +263,7 @@ def create_full_video(images_folder, music_path, bg_video_path, output_path,
 
 
 def create_short_video(image_paths, music_path, bg_video_path, output_path,
-                       duration=10, fps=30, target_size=(720, 1280),
+                       duration=10, fps=30, target_size=(1080, 1920),
                        width_fraction=0.65, gap_px=40, margin_px=60):
     """
     Create a portrait short (default 720x1280, 9:16) showing two images stacked

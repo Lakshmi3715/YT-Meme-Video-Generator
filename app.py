@@ -431,7 +431,7 @@ def _run_batch_job(job_id, mode, images_folder, images, group_size, auto_assign,
                         if f.lower().endswith(('.png', '.jpg', '.jpeg'))
                     ])
                     create_short_video(img_paths, music_path, bg_path, out_path,
-                                       duration=10, fps=30, target_size=(720, 1280))
+                                       duration=10, fps=30, target_size=(1080, 1920))
 
                 shutil.rmtree(part_folder, ignore_errors=True)
                 video_elapsed = round(time.time() - video_start, 2)
