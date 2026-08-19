@@ -1,5 +1,6 @@
 # video_processor.py
 import os
+import sys
 import subprocess
 from PIL import Image
 
@@ -30,29 +31,116 @@ def detect_qsv_support():
     return False
 
 
-def run_ffmpeg_command(cmd, fallback_cmd=None):
+def run_ffmpeg_command(cmd, total_duration, fallback_cmd=None):
     """
-    Run FFmpeg command in a subprocess. If it fails and a fallback command is provided,
-    run the fallback.
+    Run FFmpeg command in a subprocess, parsing the stdout for progress reports
+    and drawing a clean, custom progress bar in the terminal.
     """
-    print(f"Running FFmpeg command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # Insert progress flag right after ffmpeg executable name
+    progress_cmd = [cmd[0]] + ["-progress", "-"] + cmd[1:]
     
-    if result.returncode != 0:
-        print(f"FFmpeg command failed with return code {result.returncode}")
-        print(f"FFmpeg Error Output:\n{result.stderr}")
+    print(f"Starting video generation (Duration: {total_duration}s)...")
+    
+    # Run the process
+    process = subprocess.Popen(
+        progress_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1
+    )
+    
+    current_time = 0.0
+    speed = "N/A"
+    bar_len = 30
+    
+    try:
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                break
+            line = line.strip()
+            if line.startswith("out_time_us="):
+                try:
+                    us = int(line.split("=")[1])
+                    current_time = us / 1000000.0
+                except ValueError:
+                    pass
+            elif line.startswith("speed="):
+                speed = line.split("=")[1]
+            elif line.startswith("progress=end"):
+                current_time = total_duration
+            
+            # Render custom progress bar
+            percent = min(100.0, (current_time / total_duration) * 100.0)
+            filled_len = int(round(bar_len * percent / 100))
+            bar = '█' * filled_len + '-' * (bar_len - filled_len)
+            sys.stdout.write(f"\rProgress: |{bar}| {percent:.1f}% ({current_time:.1f}s/{total_duration:.1f}s) Speed: {speed}")
+            sys.stdout.flush()
+            
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+    except Exception as e:
+        process.kill()
+        raise e
+        
+    process.wait()
+    
+    if process.returncode != 0:
+        stderr_output = process.stderr.read()
+        print(f"\nFFmpeg command failed with return code {process.returncode}")
+        print(f"FFmpeg Error Output:\n{stderr_output}")
         if fallback_cmd:
             print("Attempting fallback command...")
-            print(f"Running fallback command: {' '.join(fallback_cmd)}")
-            fallback_result = subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            if fallback_result.returncode != 0:
-                print(f"Fallback command also failed with return code {fallback_result.returncode}")
-                print(f"Fallback Error Output:\n{fallback_result.stderr}")
-                raise RuntimeError(f"FFmpeg generation failed: {fallback_result.stderr}")
-            return fallback_result
+            fallback_progress_cmd = [fallback_cmd[0]] + ["-progress", "-"] + fallback_cmd[1:]
+            
+            fallback_process = subprocess.Popen(
+                fallback_progress_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+            
+            current_time = 0.0
+            speed = "N/A"
+            try:
+                while True:
+                    line = fallback_process.stdout.readline()
+                    if not line:
+                        break
+                    line = line.strip()
+                    if line.startswith("out_time_us="):
+                        try:
+                            us = int(line.split("=")[1])
+                            current_time = us / 1000000.0
+                        except ValueError:
+                            pass
+                    elif line.startswith("speed="):
+                        speed = line.split("=")[1]
+                    elif line.startswith("progress=end"):
+                        current_time = total_duration
+                        
+                    percent = min(100.0, (current_time / total_duration) * 100.0)
+                    filled_len = int(round(bar_len * percent / 100))
+                    bar = '█' * filled_len + '-' * (bar_len - filled_len)
+                    sys.stdout.write(f"\rFallback Progress: |{bar}| {percent:.1f}% ({current_time:.1f}s/{total_duration:.1f}s) Speed: {speed}")
+                    sys.stdout.flush()
+                    
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+            except Exception as e:
+                fallback_process.kill()
+                raise e
+                
+            fallback_process.wait()
+            if fallback_process.returncode != 0:
+                fallback_stderr = fallback_process.stderr.read()
+                raise RuntimeError(f"FFmpeg fallback failed: {fallback_stderr}")
+            return fallback_process
         else:
-            raise RuntimeError(f"FFmpeg generation failed: {result.stderr}")
-    return result
+            raise RuntimeError(f"FFmpeg generation failed: {stderr_output}")
+    return process
 
 
 def create_full_video(images_folder, music_path, bg_video_path, output_path,
@@ -154,7 +242,7 @@ def create_full_video(images_folder, music_path, bg_video_path, output_path,
         ]
         fallback_cmd = None
 
-    run_ffmpeg_command(cmd, fallback_cmd)
+    run_ffmpeg_command(cmd, total_duration, fallback_cmd)
 
 
 def create_short_video(image_paths, music_path, bg_video_path, output_path,
@@ -267,4 +355,4 @@ def create_short_video(image_paths, music_path, bg_video_path, output_path,
         ]
         fallback_cmd = None
 
-    run_ffmpeg_command(cmd, fallback_cmd)
+    run_ffmpeg_command(cmd, total_duration, fallback_cmd)
