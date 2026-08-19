@@ -1,135 +1,270 @@
 # video_processor.py
 import os
-from moviepy.editor import VideoFileClip, ImageClip, AudioFileClip, CompositeVideoClip
-import moviepy.video.fx.all as vfx
-from moviepy.video.VideoClip import ColorClip
+import subprocess
+from PIL import Image
+
+def detect_qsv_support():
+    """
+    Run a runtime probe to verify if Intel Quick Sync Video (h264_qsv)
+    is compiled and functional on the current hardware/drivers.
+    """
+    try:
+        # Check if h264_qsv is in encoders list
+        res = subprocess.run(["ffmpeg", "-encoders"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        if "h264_qsv" in res.stdout:
+            # Probe encode functionality using a dummy frame
+            test_cmd = [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=100x100:d=0.1",
+                "-c:v", "h264_qsv", "-f", "null", "-"
+            ]
+            test_run = subprocess.run(test_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if test_run.returncode == 0:
+                print("Intel QSV hardware acceleration (h264_qsv) is supported and functional.")
+                return True
+            else:
+                print("Intel QSV encoder detected but not functional. Falling back to software encoding.")
+        else:
+            print("Intel QSV encoder (h264_qsv) not found in FFmpeg configuration.")
+    except Exception as e:
+        print(f"Error checking QSV support: {e}. Falling back to software encoding.")
+    return False
+
+
+def run_ffmpeg_command(cmd, fallback_cmd=None):
+    """
+    Run FFmpeg command in a subprocess. If it fails and a fallback command is provided,
+    run the fallback.
+    """
+    print(f"Running FFmpeg command: {' '.join(cmd)}")
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    
+    if result.returncode != 0:
+        print(f"FFmpeg command failed with return code {result.returncode}")
+        print(f"FFmpeg Error Output:\n{result.stderr}")
+        if fallback_cmd:
+            print("Attempting fallback command...")
+            print(f"Running fallback command: {' '.join(fallback_cmd)}")
+            fallback_result = subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if fallback_result.returncode != 0:
+                print(f"Fallback command also failed with return code {fallback_result.returncode}")
+                print(f"Fallback Error Output:\n{fallback_result.stderr}")
+                raise RuntimeError(f"FFmpeg generation failed: {fallback_result.stderr}")
+            return fallback_result
+        else:
+            raise RuntimeError(f"FFmpeg generation failed: {result.stderr}")
+    return result
 
 
 def create_full_video(images_folder, music_path, bg_video_path, output_path,
-                      image_display_sec=7, fps=24, target_size=(1280,720)):
+                      image_display_sec=7, fps=24, target_size=(1280, 720)):
     """
     Full video: expects images_folder to have exactly 15 images.
     Each image displayed for image_display_sec seconds sequentially.
-    target_size default is 1280x720 (16:9).
     """
     images = sorted([
         os.path.join(images_folder, f) for f in os.listdir(images_folder)
-        if f.lower().endswith(('.png','.jpg','.jpeg'))
+        if f.lower().endswith(('.png', '.jpg', '.jpeg'))
     ])
     if len(images) != 15:
         raise ValueError(f"Full video requires exactly 15 images; found {len(images)}")
 
     total_duration = 15 * image_display_sec
+    target_w, target_h = target_size
+    use_qsv = detect_qsv_support()
 
-    # Prepare background: resize to target size, loop/trim
-    bg = VideoFileClip(bg_video_path)
-    bg = bg.resize(newsize=target_size)
-    if bg.duration < total_duration:
-        bg = vfx.loop(bg, duration=total_duration)
+    # Dynamically build FFmpeg filter graph
+    # Inputs:
+    # 0: bg_video
+    # 1..15: images (15 inputs)
+    # 16: music
+    filters = []
+    
+    # Scale background video to match target dimensions
+    filters.append(f"[0:v]scale={target_w}:{target_h}[bg]")
+    
+    last_label = "[bg]"
+    for i in range(15):
+        img_input = f"[{i+1}:v]"
+        start_t = i * image_display_sec
+        end_t = (i + 1) * image_display_sec
+        
+        # Proportional resize image to fit inside target box
+        scale_filt = (
+            f"scale=w='if(gt(iw/ih,{target_w}/{target_h}),{target_w},-1)':"
+            f"h='if(gt(iw/ih,{target_w}/{target_h}),-1,{target_h})'"
+        )
+        scaled_label = f"[img{i}]"
+        filters.append(f"{img_input}{scale_filt}{scaled_label}")
+        
+        # Overlay current image centered, active during its display window
+        out_label = f"[v{i}]" if i < 14 else "[outv]"
+        overlay_filt = (
+            f"{last_label}{scaled_label}overlay="
+            f"x='({target_w}-w)/2':y='({target_h}-h)/2':"
+            f"enable='between(t,{start_t},{end_t})'"
+        )
+        filters.append(f"{overlay_filt}{out_label}")
+        last_label = f"[v{i}]" if i < 14 else "[outv]"
+        
+    filter_complex = ";".join(filters)
+
+    # Base commands
+    base_cmd_inputs = [
+        "ffmpeg", "-y",
+        "-stream_loop", "-1", "-i", bg_video_path
+    ]
+    for img in images:
+        base_cmd_inputs += ["-loop", "1", "-i", img]
+    base_cmd_inputs += ["-stream_loop", "-1", "-i", music_path]
+
+    # Shared parameters
+    shared_params = [
+        "-filter_complex", filter_complex,
+        "-map", "[outv]",
+        "-map", "16:a",
+        "-t", str(total_duration),
+        "-r", str(fps),
+        "-c:a", "aac",
+        "-b:a", "128k"
+    ]
+
+    # Main Command (QSV if supported)
+    if use_qsv:
+        cmd = base_cmd_inputs + shared_params + [
+            "-c:v", "h264_qsv",
+            "-global_quality", "25",
+            "-preset", "faster",
+            output_path
+        ]
+        # Fallback to software encoding if QSV command fails
+        fallback_cmd = base_cmd_inputs + shared_params + [
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            output_path
+        ]
     else:
-        bg = bg.subclip(0, total_duration)
+        cmd = base_cmd_inputs + shared_params + [
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            output_path
+        ]
+        fallback_cmd = None
 
-    # Create image overlays sequentially (fit_inside logic, no cropping)
-    image_clips = []
-    target_ratio = target_size[0] / target_size[1]
-
-    for i, img_path in enumerate(images):
-        ic = ImageClip(img_path).set_duration(image_display_sec)
-
-        # proportional resize to fit inside 16:9
-        img_ratio = ic.w / ic.h
-        if img_ratio > target_ratio:
-            ic = ic.resize(width=target_size[0])
-        else:
-            ic = ic.resize(height=target_size[1])
-
-        # center placement, no trimming
-        ic = ic.set_position(("center", "center")).set_start(i * image_display_sec)
-        image_clips.append(ic)
-
-    composite = CompositeVideoClip([bg] + image_clips, size=target_size).set_duration(total_duration)
-
-    # Audio: loop/trim
-    audio = AudioFileClip(music_path)
-    if audio.duration < total_duration:
-        audio = vfx.loop(audio, duration=total_duration)
-    else:
-        audio = audio.subclip(0, total_duration)
-    composite = composite.set_audio(audio)
-
-    # Write out
-    composite.write_videofile(output_path, fps=fps, codec='libx264', audio_codec='aac', threads=4)
+    run_ffmpeg_command(cmd, fallback_cmd)
 
 
 def create_short_video(image_paths, music_path, bg_video_path, output_path,
-                       duration=10, fps=30, target_size=(720,1280),
+                       duration=10, fps=30, target_size=(720, 1280),
                        width_fraction=0.65, gap_px=40, margin_px=60):
     """
     Create a portrait short (default 720x1280, 9:16) showing two images stacked
     (top & bottom) with a gap so the background video remains visible.
-    - image_paths: list of two image file paths
-    - music_path, bg_video_path: files from assets
     """
     if len(image_paths) != 2:
         raise ValueError("Short video requires exactly 2 images")
 
     total_duration = duration
     target_w, target_h = target_size
+    use_qsv = detect_qsv_support()
 
-    # --- Prepare background video: scale to portrait height, then crop or pad horizontally ---
-    bg = VideoFileClip(bg_video_path)
-    # Resize background to match target height first (preserve aspect)
-    bg = bg.resize(height=target_h)
+    # Pre-calculate sizes using Pillow to build simple FFmpeg filters
+    with Image.open(image_paths[0]) as im1:
+        w1, h1 = im1.size
+    with Image.open(image_paths[1]) as im2:
+        w2, h2 = im2.size
 
-    if bg.w > target_w:
-        # crop horizontally centered to target width
-        bg = vfx.crop(bg, width=target_w, height=target_h, x_center=bg.w/2, y_center=bg.h/2)
-    elif bg.w < target_w:
-        # pad background onto a solid-color clip of target size
-        background = ColorClip(size=(target_w, target_h), color=(0, 0, 0), duration=total_duration)
-        bg = CompositeVideoClip([background, bg.set_position(("center", "center"))], size=(target_w, target_h))
-    else:
-        bg = bg.set_position(("center", "center"))
-
-    # Ensure bg exact duration
-    if bg.duration < total_duration:
-        bg = vfx.loop(bg, duration=total_duration)
-    else:
-        bg = bg.subclip(0, total_duration)
-
-    # --- Prepare image clips ---
-    img_top = ImageClip(image_paths[0]).set_duration(total_duration)
-    img_bottom = ImageClip(image_paths[1]).set_duration(total_duration)
-
-    # Resize by width_fraction of target width to keep background visible.
     max_img_w = int(target_w * width_fraction)
-    img_top = img_top.resize(width=max_img_w)
-    img_bottom = img_bottom.resize(width=max_img_w)
-
-    # If combined heights don't fit, scale down both proportionally
-    combined_h = img_top.h + img_bottom.h + gap_px + 2 * margin_px
+    
+    # Scale aspect ratio calculations
+    s1 = max_img_w / w1
+    s2 = max_img_w / w2
+    
+    h1_scaled = int(h1 * s1)
+    h2_scaled = int(h2 * s2)
+    
+    # Downscale if combined height exceeds boundaries
+    combined_h = h1_scaled + h2_scaled + gap_px + 2 * margin_px
     if combined_h > target_h:
-        scale = (target_h - gap_px - 2 * margin_px) / (img_top.h + img_bottom.h)
-        img_top = img_top.resize(scale)
-        img_bottom = img_bottom.resize(scale)
-
-    # Compute vertical positions
-    top_y = margin_px
-    bottom_y = target_h - margin_px - img_bottom.h
-
-    img_top = img_top.set_position(("center", top_y))
-    img_bottom = img_bottom.set_position(("center", bottom_y))
-
-    # Compose final clip
-    composite = CompositeVideoClip([bg, img_top, img_bottom], size=(target_w, target_h)).set_duration(total_duration)
-
-    # --- Audio: loop or trim music to duration ---
-    audio = AudioFileClip(music_path)
-    if audio.duration < total_duration:
-        audio = vfx.loop(audio, duration=total_duration)
+        scale = (target_h - gap_px - 2 * margin_px) / (h1_scaled + h2_scaled)
+        h1_scaled = int(h1_scaled * scale)
+        h2_scaled = int(h2_scaled * scale)
+        w1_final = int(max_img_w * scale)
+        w2_final = int(max_img_w * scale)
     else:
-        audio = audio.subclip(0, total_duration)
-    composite = composite.set_audio(audio)
+        w1_final = max_img_w
+        w2_final = max_img_w
+        
+    top_y = margin_px
+    bottom_y = target_h - margin_px - h2_scaled
 
-    # write final file
-    composite.write_videofile(output_path, fps=fps, codec='libx264', audio_codec='aac', threads=4)
+    # Filter Complex:
+    # 0: bg_video
+    # 1: top image
+    # 2: bottom image
+    # 3: music
+    filters = []
+    
+    # Resize background video to match target height, crop horizontally centered
+    filters.append(f"[0:v]scale=-1:{target_h},crop={target_w}:{target_h}[bg]")
+    
+    # Scale images
+    filters.append(f"[1:v]scale={w1_final}:{h1_scaled}[img1]")
+    filters.append(f"[2:v]scale={w2_final}:{h2_scaled}[img2]")
+    
+    # Overlays
+    filters.append(f"[bg][img1]overlay=x=({target_w}-w)/2:y={top_y}[tmp1]")
+    filters.append(f"[tmp1][img2]overlay=x=({target_w}-w)/2:y={bottom_y}[outv]")
+    
+    filter_complex = ";".join(filters)
+
+    # Base commands
+    base_cmd_inputs = [
+        "ffmpeg", "-y",
+        "-stream_loop", "-1", "-i", bg_video_path,
+        "-loop", "1", "-i", image_paths[0],
+        "-loop", "1", "-i", image_paths[1],
+        "-stream_loop", "-1", "-i", music_path
+    ]
+
+    # Shared parameters
+    shared_params = [
+        "-filter_complex", filter_complex,
+        "-map", "[outv]",
+        "-map", "3:a",
+        "-t", str(total_duration),
+        "-r", str(fps),
+        "-c:a", "aac",
+        "-b:a", "128k"
+    ]
+
+    # Main Command (QSV if supported)
+    if use_qsv:
+        cmd = base_cmd_inputs + shared_params + [
+            "-c:v", "h264_qsv",
+            "-global_quality", "25",
+            "-preset", "faster",
+            output_path
+        ]
+        # Fallback to software encoding
+        fallback_cmd = base_cmd_inputs + shared_params + [
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            output_path
+        ]
+    else:
+        cmd = base_cmd_inputs + shared_params + [
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            output_path
+        ]
+        fallback_cmd = None
+
+    run_ffmpeg_command(cmd, fallback_cmd)
