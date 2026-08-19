@@ -35,17 +35,20 @@ def run_ffmpeg_command(cmd, total_duration, fallback_cmd=None):
     """
     Run FFmpeg command in a subprocess, parsing the stdout for progress reports
     and drawing a clean, custom progress bar in the terminal.
+    
+    Uses stderr=subprocess.STDOUT to merge standard streams, preventing deadlocks
+    caused by buffer exhaustion on the stderr pipe.
     """
     # Insert progress flag right after ffmpeg executable name
     progress_cmd = [cmd[0]] + ["-progress", "-"] + cmd[1:]
     
     print(f"Starting video generation (Duration: {total_duration}s)...")
     
-    # Run the process
+    # Run the process. Merge stderr into stdout to prevent pipe deadlocks.
     process = subprocess.Popen(
         progress_cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         bufsize=1
     )
@@ -53,12 +56,18 @@ def run_ffmpeg_command(cmd, total_duration, fallback_cmd=None):
     current_time = 0.0
     speed = "N/A"
     bar_len = 30
+    log_lines = []
     
     try:
         while True:
             line = process.stdout.readline()
             if not line:
                 break
+            
+            log_lines.append(line)
+            if len(log_lines) > 200:
+                log_lines.pop(0)
+                
             line = line.strip()
             if line.startswith("out_time_us="):
                 try:
@@ -87,9 +96,10 @@ def run_ffmpeg_command(cmd, total_duration, fallback_cmd=None):
     process.wait()
     
     if process.returncode != 0:
-        stderr_output = process.stderr.read()
+        full_logs = "".join(log_lines)
         print(f"\nFFmpeg command failed with return code {process.returncode}")
-        print(f"FFmpeg Error Output:\n{stderr_output}")
+        print(f"FFmpeg Output Log:\n{full_logs}")
+        
         if fallback_cmd:
             print("Attempting fallback command...")
             fallback_progress_cmd = [fallback_cmd[0]] + ["-progress", "-"] + fallback_cmd[1:]
@@ -97,18 +107,25 @@ def run_ffmpeg_command(cmd, total_duration, fallback_cmd=None):
             fallback_process = subprocess.Popen(
                 fallback_progress_cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1
             )
             
             current_time = 0.0
             speed = "N/A"
+            fallback_logs = []
+            
             try:
                 while True:
                     line = fallback_process.stdout.readline()
                     if not line:
                         break
+                    
+                    fallback_logs.append(line)
+                    if len(fallback_logs) > 200:
+                        fallback_logs.pop(0)
+                        
                     line = line.strip()
                     if line.startswith("out_time_us="):
                         try:
@@ -135,11 +152,11 @@ def run_ffmpeg_command(cmd, total_duration, fallback_cmd=None):
                 
             fallback_process.wait()
             if fallback_process.returncode != 0:
-                fallback_stderr = fallback_process.stderr.read()
-                raise RuntimeError(f"FFmpeg fallback failed: {fallback_stderr}")
+                fallback_logs_str = "".join(fallback_logs)
+                raise RuntimeError(f"FFmpeg fallback failed:\n{fallback_logs_str}")
             return fallback_process
         else:
-            raise RuntimeError(f"FFmpeg generation failed: {stderr_output}")
+            raise RuntimeError(f"FFmpeg generation failed:\n{full_logs}")
     return process
 
 
