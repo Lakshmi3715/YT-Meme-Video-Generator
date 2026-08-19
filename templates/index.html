@@ -1,0 +1,393 @@
+<!-- templates/index.html -->
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <title>YT Meme Video Generator — YouTube Meme Video Generator</title>
+  <meta name="description" content="Create professional YouTube videos in minutes with automated background video, music, and image slideshow generation.">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/styles.css') }}" rel="stylesheet">
+</head>
+<body>
+
+  <!-- ====== HEADER ====== -->
+  <header class="app-header">
+    <a href="/" class="logo">
+      <div class="logo-icon"><i class="bi bi-play-fill"></i></div>
+      <div class="logo-text">
+        <h1>YouTube Meme Video Generator</h1>
+        <p>Create funny meme videos for your channel in minutes</p>
+      </div>
+    </a>
+    <div class="spacer"></div>
+    <button class="hdr-btn" id="themeToggle" title="Toggle theme" aria-label="Toggle dark mode">
+      <i class="bi bi-moon-fill" id="themeIcon"></i>
+    </button>
+    <button class="hdr-btn" id="notificationBellBtn" title="Notifications" aria-label="Notifications" style="position: relative;">
+      <i class="bi bi-bell"></i>
+      <span id="notificationBadge" style="display:none; position:absolute; top:2px; right:2px; width:8px; height:8px; background:var(--accent); border-radius:50%;"></span>
+    </button>
+    <button class="hdr-docs" id="docsBtn" title="Docs & Help" aria-label="Docs and Help">
+      <i class="bi bi-question-circle"></i> Docs &amp; Help
+    </button>
+  </header>
+
+  <!-- ====== BODY ====== -->
+  <div class="app-body">
+
+    <!-- ====== LEFT PANE ====== -->
+    <aside class="app-left" id="leftPane">
+
+      <!-- SECTION 1: Create a Video -->
+      <div class="yt-card">
+        <div class="section-label">
+          <span class="section-num">1</span>
+          <h2>Create a Video</h2>
+        </div>
+
+        <!-- Video Type -->
+        <p class="text-muted-sm mb-2" style="margin-bottom:8px;">Choose video type</p>
+        <div class="video-type-row" id="vtypeRow">
+          <div class="vtype-card active" data-mode="full" id="vtypeFull">
+            <div class="vtype-icon red"><i class="bi bi-camera-video-fill"></i></div>
+            <div class="vtype-info">
+              <h4>Full Video</h4>
+              <span>15 images, ~1:45</span>
+            </div>
+            <div class="vtype-check"><i class="bi bi-check2"></i></div>
+          </div>
+          <div class="vtype-card" data-mode="short" id="vtypeShort">
+            <div class="vtype-icon gray"><i class="bi bi-phone-fill"></i></div>
+            <div class="vtype-info">
+              <h4>Short Video</h4>
+              <span>2 images, 10s</span>
+            </div>
+            <div class="vtype-check"><i class="bi bi-check2"></i></div>
+          </div>
+        </div>
+        <input type="hidden" id="selectedMode" value="full">
+
+        <!-- Images ZIP dropzone -->
+        <p class="text-muted-sm" style="margin-bottom:6px;">Upload images ZIP</p>
+        <div class="dropzone" id="imageDropzone">
+          <div id="dzDefaultState">
+            <div class="dz-icon"><i class="bi bi-cloud-upload"></i></div>
+            <p>Drag &amp; drop your ZIP file here</p>
+            <p class="dz-or">or</p>
+            <span class="btn-choose"><i class="bi bi-folder2-open"></i> Choose File</span>
+          </div>
+          <div id="dzActiveState" style="display:none;">
+            <div class="dz-icon" style="color:var(--accent);"><i class="bi bi-check-circle-fill"></i></div>
+            <p style="font-weight:600;">File Selected &amp; Ready</p>
+            <div style="font-size:12px; color:var(--accent); font-weight:500;" id="dzFilenameInner"></div>
+            <span class="btn-choose" style="background:var(--text-secondary); margin-top:8px;"><i class="bi bi-arrow-repeat"></i> Change File</span>
+          </div>
+          <input type="file" id="imagesZip" accept=".zip" aria-label="Upload images ZIP">
+        </div>
+        <div class="dz-hint" id="imageHint">Full: zip must include 15 images. Short: zip must include 2 images.</div>
+
+        <!-- Auto-assign -->
+        <label class="yt-check">
+          <input type="checkbox" id="autoAssign" checked>
+          Auto-assign background assets sequentially
+          <i class="bi bi-info-circle info-icon" title="Assets are rotated sequentially across batch videos"></i>
+        </label>
+
+        <!-- Manual selection -->
+        <div id="manualSelection" class="manual-select-row" style="display:none;">
+          <div>
+            <span class="yt-label">Music</span>
+            <select id="musicSelect" class="yt-select" aria-label="Select music"></select>
+          </div>
+          <div>
+            <span class="yt-label">Background Video</span>
+            <select id="bgSelect" class="yt-select" aria-label="Select background video"></select>
+          </div>
+        </div>
+
+        <!-- Buttons -->
+        <div class="btn-row">
+          <button class="btn-primary-yt" id="createBatchBtn" aria-label="Create Batch (Split ZIP)">
+            <i class="bi bi-layers"></i> Create Batch (Split ZIP)
+          </button>
+        </div>
+
+        <!-- Progress -->
+        <div class="progress-bar-wrap" id="progress">
+          <div class="progress-label">
+            <div class="spinner-sm"></div>
+            Processing — this can take a minute or two…
+          </div>
+        </div>
+
+        <!-- Result -->
+        <div id="result"></div>
+      </div>
+
+      <!-- SECTION 2: Media Library -->
+      <div class="yt-card">
+        <div class="section-label">
+          <span class="section-num">2</span>
+          <h2>Media Library</h2>
+        </div>
+
+        <!-- Upload cards -->
+        <div class="upload-grid">
+          <div class="upload-mini">
+            <div class="um-head">
+              <div class="um-icon music"><i class="bi bi-music-note-beamed"></i></div>
+              Add music
+            </div>
+            <div class="um-file-row">
+              <span id="musicFilename">No file chosen</span>
+            </div>
+            <input type="file" id="musicFile" accept="audio/*" style="display:none;" aria-label="Choose music file">
+            <button class="btn-choose-sm" id="chooseMusicBtn" style="margin-bottom:5px;">
+              <i class="bi bi-folder2-open"></i> Choose File
+            </button>
+            <button class="btn-upload-sm" id="uploadMusicBtn">
+              <i class="bi bi-cloud-upload"></i> Upload Music
+            </button>
+          </div>
+          <div class="upload-mini">
+            <div class="um-head">
+              <div class="um-icon video"><i class="bi bi-camera-video-fill"></i></div>
+              Add background video
+            </div>
+            <div class="um-file-row">
+              <span id="bgFilename">No file chosen</span>
+            </div>
+            <input type="file" id="bgFile" accept="video/*" style="display:none;" aria-label="Choose background video file">
+            <button class="btn-choose-sm" id="chooseBgBtn" style="margin-bottom:5px;">
+              <i class="bi bi-folder2-open"></i> Choose File
+            </button>
+            <button class="btn-upload-sm" id="uploadBgBtn">
+              <i class="bi bi-cloud-upload"></i> Upload Background
+            </button>
+          </div>
+        </div>
+
+        <!-- Batch ZIP -->
+        <div class="divider"></div>
+        <p class="text-muted-sm" style="margin-bottom:4px;font-weight:600;">Batch upload assets (ZIP)</p>
+        <p class="text-muted-sm" style="margin-bottom:6px;">Upload a ZIP containing both audio and background video files.</p>
+        <div class="badge-tags">
+          <span class="badge-tag">mp3</span><span class="badge-tag">wav</span><span class="badge-tag">aac</span>
+          <span class="badge-tag">m4a</span><span class="badge-tag">mp4</span><span class="badge-tag">mov</span>
+          <span class="badge-tag">avi</span><span class="badge-tag">mkv</span><span class="badge-tag">webm</span>
+        </div>
+        <div class="batch-zip-row">
+          <div class="batch-file-input-wrap" id="batchFilenameWrap">
+            <span id="batchFilename">No file chosen</span>
+            <input type="file" id="assetsZip" accept=".zip" aria-label="Batch upload assets ZIP">
+          </div>
+          <button class="btn-success-yt" id="uploadAssetsZipBtn" style="flex:0 0 auto; padding: 8px 14px; font-size:12.5px;">
+            <i class="bi bi-cloud-upload"></i> Upload ZIP
+          </button>
+        </div>
+        <div id="uploadStatus" style="margin-top:6px;"></div>
+      </div>
+
+      <!-- SECTION 3: Existing Assets -->
+      <div class="yt-card">
+        <div class="section-head-row">
+          <div class="section-label" style="margin-bottom:0;">
+            <span class="section-num">3</span>
+            <h2>Existing Assets</h2>
+          </div>
+          <span class="view-all-link" id="viewAllAssetsBtn">View all assets <i class="bi bi-arrow-right"></i></span>
+        </div>
+        <div class="assets-two-col">
+          <div class="assets-col">
+            <h3 class="assets-col-title">
+              <span><i class="bi bi-music-note-beamed" style="color:var(--accent); margin-right:4px;"></i> Music (MP3/WAV)</span>
+              <span class="asset-count badge-music" id="musicCount">0</span>
+            </h3>
+            <div class="asset-list" id="musicList"></div>
+          </div>
+          <div class="assets-col">
+            <h3 class="assets-col-title">
+              <span><i class="bi bi-camera-video-fill" style="color:#6366f1; margin-right:4px;"></i> Video (MP4)</span>
+              <span class="asset-count badge-video" id="bgCount">0</span>
+            </h3>
+            <div class="asset-list" id="bgList"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Tips -->
+      <div class="quick-tips">
+        <div class="tips-icon">💡</div>
+        <div class="tips-content">
+          <h4>Quick Tips</h4>
+          <p>Use high quality images and clear audio for the best results. Longer background videos produce more variety across batch generations.</p>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- ====== RIGHT PANE ====== -->
+    <main class="app-right">
+      <div class="queue-header">
+        <h2><i class="bi bi-collection-play-fill"></i> Generation Queues</h2>
+        <div class="spacer"></div>
+        <button class="btn-refresh" id="refreshQueuesBtn" aria-label="Refresh queues">
+          <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+      </div>
+
+      <div class="queue-tabs">
+        <button class="queue-tab active" id="tabLong" data-queue="long" aria-label="Long Form Queue">
+          Long Form Queue <span class="tab-count" id="longCount">0</span>
+        </button>
+        <button class="queue-tab" id="tabShort" data-queue="short" aria-label="Short Form Queue">
+          Short Form Queue <span class="tab-count" id="shortCount">0</span>
+        </button>
+      </div>
+
+      <div class="queue-body">
+        <!-- Long Form Queue Panel -->
+        <div class="qpanel active" id="panelLong">
+          <div class="empty-state" id="longEmpty">
+            <div class="empty-clapboard"><i class="bi bi-film"></i></div>
+            <h3>No videos in queue yet</h3>
+            <p>Upload your assets and create your first video.</p>
+          </div>
+          <div id="longQueue" class="d-flex flex-column gap-3"></div>
+        </div>
+
+        <!-- Short Form Queue Panel -->
+        <div class="qpanel" id="panelShort">
+          <div class="empty-state" id="shortEmpty">
+            <div class="empty-clapboard"><i class="bi bi-phone-fill"></i></div>
+            <h3>No shorts in queue yet</h3>
+            <p>Upload your assets and create your first short.</p>
+          </div>
+          <div id="shortQueue" class="d-flex flex-column gap-3"></div>
+        </div>
+      </div>
+
+      <!-- How it Works -->
+      <div class="how-works">
+        <div class="hw-step">
+          <div class="hw-icon upload"><i class="bi bi-cloud-arrow-up-fill"></i></div>
+          <p>Upload your images, music and videos.</p>
+        </div>
+        <div class="hw-arrow"><i class="bi bi-arrow-right"></i></div>
+        <div class="hw-step">
+          <div class="hw-icon create"><i class="bi bi-gear-fill"></i></div>
+          <p>We'll process and build your video.</p>
+        </div>
+        <div class="hw-arrow"><i class="bi bi-arrow-right"></i></div>
+        <div class="hw-step">
+          <div class="hw-icon dl"><i class="bi bi-download"></i></div>
+          <p>Download and share your video.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Preview Modal -->
+  <div id="previewModal" style="
+    display:none; position:fixed; inset:0; z-index:1000;
+    background:rgba(0,0,0,0.7); backdrop-filter:blur(6px);
+    align-items:center; justify-content:center;
+  ">
+    <div id="previewBox" style="
+      background:var(--bg-card); border:1px solid var(--border);
+      border-radius:var(--radius-lg); padding:20px;
+      width:clamp(300px,50vw,640px); max-width:95vw;
+      box-shadow:var(--shadow-lg); position:relative;
+    ">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+        <div style="font-size:13px; font-weight:700; color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; margin-right:12px;" id="previewTitle"></div>
+        <button id="previewClose" style="
+          width:28px; height:28px; border-radius:6px;
+          border:1px solid var(--border); background:var(--bg-input);
+          color:var(--text-secondary); cursor:pointer; font-size:15px;
+          display:grid; place-items:center; flex-shrink:0;
+        "><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div id="previewPlayer"></div>
+      <div style="margin-top:12px; display:flex; justify-content:flex-end;">
+        <a id="previewDownload" href="#" download style="
+          display:inline-flex; align-items:center; gap:6px;
+          padding:8px 16px; background:var(--accent); color:#fff;
+          border-radius:var(--radius-sm); font-size:13px; font-weight:600;
+          text-decoration:none;
+        "><i class="bi bi-download"></i> Download</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Modal -->
+  <div id="notificationModal" style="
+    display:none; position:fixed; inset:0; z-index:1000;
+    background:rgba(0,0,0,0.7); backdrop-filter:blur(6px);
+    align-items:center; justify-content:center;
+  ">
+    <div style="
+      background:var(--bg-card); border:1px solid var(--border);
+      border-radius:var(--radius-lg); padding:20px;
+      width:clamp(300px,40vw,500px); max-width:95vw;
+      box-shadow:var(--shadow-lg); position:relative;
+    ">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+        <h5 style="font-size:14px; font-weight:700; color:var(--text-primary); margin:0;">Notification History</h5>
+        <button id="notificationClose" style="
+          width:28px; height:28px; border-radius:6px;
+          border:1px solid var(--border); background:var(--bg-input);
+          color:var(--text-secondary); cursor:pointer; font-size:15px;
+          display:grid; place-items:center; flex-shrink:0;
+        "><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div id="notificationList" style="max-height: 300px; overflow-y: auto; display:flex; flex-direction:column; gap:8px;">
+        <div class="text-muted text-center" style="font-size:12.5px; padding:10px 0;">No notifications yet.</div>
+      </div>
+      <div style="margin-top:12px; display:flex; justify-content:flex-end;">
+        <button id="clearNotificationsBtn" class="btn-asset" style="padding:6px 12px; font-size:12px;">Clear All</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Docs Modal -->
+  <div id="docsModal" style="
+    display:none; position:fixed; inset:0; z-index:1000;
+    background:rgba(0,0,0,0.7); backdrop-filter:blur(6px);
+    align-items:center; justify-content:center;
+  ">
+    <div style="
+      background:var(--bg-card); border:1px solid var(--border);
+      border-radius:var(--radius-lg); padding:20px;
+      width:clamp(300px,60vw,800px); max-width:95vw;
+      box-shadow:var(--shadow-lg); position:relative;
+    ">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+        <h5 style="font-size:14px; font-weight:700; color:var(--text-primary); margin:0;">Documentation &amp; Help</h5>
+        <button id="docsClose" style="
+          width:28px; height:28px; border-radius:6px;
+          border:1px solid var(--border); background:var(--bg-input);
+          color:var(--text-secondary); cursor:pointer; font-size:15px;
+          display:grid; place-items:center; flex-shrink:0;
+        "><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div id="docsContent" style="max-height: 50vh; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 12px; background: var(--bg-input); border-radius: var(--radius-sm); padding: 12px; color: var(--text-primary); border: 1px solid var(--border);">
+        Loading documentation...
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="yt-toast" id="ytToast">
+    <div class="t-icon" id="toastIcon">✅</div>
+    <div class="t-text">
+      <div class="t-title" id="toastTitle">Done</div>
+      <div class="t-msg" id="toastMsg"></div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

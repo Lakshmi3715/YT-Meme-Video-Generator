@@ -1,0 +1,7 @@
+Flask
+Flask-SQLAlchemy
+moviepy
+Pillow
+python-dotenv
+moviepy==1.0.3
+plyer
